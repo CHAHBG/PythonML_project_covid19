@@ -108,6 +108,12 @@ def load_data():
             nrows=MAX_ROWS,
             dtype=dtype_map,
         )
+
+        # On ne garde que les patients COVID Positifs (Class 1, 2, 3)
+        if 'CLASIFFICATION_FINAL' in df_raw_source.columns:
+            print(f"Patients total : {len(df_raw_source)}")
+            df_raw_source = df_raw_source[df_raw_source['CLASIFFICATION_FINAL'] < 4]
+            print(f"Patients COVID+ uniquement : {len(df_raw_source)}")
     except Exception as e:
         st.error("Erreur : Le fichier 'data/covid19_data.csv' est introuvable.")
         return pd.DataFrame(), pd.DataFrame()
