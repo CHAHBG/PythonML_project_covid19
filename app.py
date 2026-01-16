@@ -222,12 +222,12 @@ if page == "Accueil":
     
     with tab_raw:
         st.info("Données telles qu'elles sont collectées, incluant les valeurs manquantes (97, 99) et erreurs.")
-        st.dataframe(df_raw.head(50), use_container_width=True)
+        st.dataframe(df_raw.head(50), width="stretch")
         st.markdown(f"**Dimensions :** {df_raw.shape[0]:,} lignes × {df_raw.shape[1]} colonnes")
         
     with tab_clean:
         st.success("Données traitées : Valeurs manquantes supprimées, Normalisation binaire (0/1).")
-        st.dataframe(df.head(50), use_container_width=True)
+        st.dataframe(df.head(50), width="stretch")
         st.markdown(f"**Dimensions :** {df.shape[0]:,} lignes × {df.shape[1]} colonnes")
 
 # --- PAGE 2: EXPLORATION INTUITIVE (EVA) ---
@@ -249,7 +249,7 @@ elif page == "Exploration Intuitive":
                           color='Statut', color_discrete_map={'Survivant':'#00CC96', 'Décédé':'#EF553B'})
             fig1.update_traces(textinfo='percent+label')
             fig1.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig1, use_container_width=True)
+            st.plotly_chart(fig1, width="stretch")
         
         # 2. LINE CHART (Temporal Trend)
         with col_R:
@@ -264,7 +264,7 @@ elif page == "Exploration Intuitive":
                 fig2.update_traces(line_color='#EF553B', line_width=3, hovertemplate="<b>%{x}</b><br>Décès: %{y}<extra></extra>")
                 fig2.update_layout(xaxis_title=None, yaxis_title=None, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                                   xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor='#444'))
-                st.plotly_chart(fig2, use_container_width=True)
+                st.plotly_chart(fig2, width="stretch")
 
         st.markdown("---")
         
@@ -281,7 +281,7 @@ elif page == "Exploration Intuitive":
                                     labels={'AGE': 'Âge (Ans)', 'DEATH_LABEL': 'Statut Vital', 'count': 'Nombre de Patients'})
                 fig3.update_layout(xaxis_title="Âge", yaxis_title="Nombre", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                                    font=dict(color="white"), legend_title="Statut")
-                st.plotly_chart(fig3, use_container_width=True)
+                st.plotly_chart(fig3, width="stretch")
                 
             with c_bio2:
                 st.markdown("**Soins Intensifs (ICU)**")
@@ -293,7 +293,7 @@ elif page == "Exploration Intuitive":
                                      labels={'ICU_LABEL': 'Admission en Réanimation', 'AGE': 'Âge (Ans)'})
                     fig4.update_layout(xaxis_title="Admission en Réa", yaxis_title="Âge", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                                        font=dict(color="white"), showlegend=False)
-                    st.plotly_chart(fig4, use_container_width=True)
+                    st.plotly_chart(fig4, width="stretch")
 
         # 4. BAR CHART COMORBIDITIES
         with tab2:
@@ -311,7 +311,7 @@ elif page == "Exploration Intuitive":
                               labels={label_col: 'Présence de la Maladie', 'Taux Mortalité (%)': 'Taux de Décès (%)'})
                 fig5.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", 
                                    font=dict(color="white"))
-                st.plotly_chart(fig5, use_container_width=True)
+                st.plotly_chart(fig5, width="stretch")
 
         # 5. HEATMAP
         with tab3:
@@ -323,7 +323,7 @@ elif page == "Exploration Intuitive":
                                  labels=dict(x="Variable 1", y="Variable 2", color="Corrélation"))
                 fig6.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                                    font=dict(color="white"))
-                st.plotly_chart(fig6, use_container_width=True)
+                st.plotly_chart(fig6, width="stretch")
 
 # --- PAGE 3: DIAGNOSTIC IA ---
 elif page == "Diagnostic IA":
