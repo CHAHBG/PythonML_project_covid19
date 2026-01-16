@@ -4,6 +4,7 @@ import numpy as np
 import pickle
 import joblib
 import time
+import random
 import plotly.express as px
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
@@ -76,11 +77,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- DATA LOADING ---
-@st.cache_resource
+@st.cache_data(ttl="2h")
 def load_data():
     try:
-        # Load Raw Data
-        df_raw_source = pd.read_csv('data/covid19_data.csv')
+        # Load Raw Data - Optimisation avec pyarrow si disponible
+        try:
+            df_raw_source = pd.read_csv('data/covid19_data.csv', engine='pyarrow')
+        except:
+             df_raw_source = pd.read_csv('data/covid19_data.csv')
     except Exception as e:
         st.error("Erreur : Le fichier 'data/covid19_data.csv' est introuvable.")
         return pd.DataFrame(), pd.DataFrame()
@@ -186,8 +190,95 @@ def get_model(_df_clean):
             
         return model
 
-# --- INIT LOADING ---
-with st.spinner('Chargement des données et des modèles IA...'):
+# --- INIT LOADING & SPLASH SCREEN ---
+# Astuces éducatives pendant le chargement
+medical_facts = [
+    "💡 Le saviez-vous ? Le lavage des mains réduit de 50% la transmission des infections respiratoires.",
+    "🧬 Analyse : Les modèles Random Forest combinent des centaines d'arbres de décision pour plus de précision.",
+    "⚠️ Facteur : L'âge est le facteur de risque le plus significatif dans notre base de données.",
+    "📊 Données : Nous analysons plus de 500 000 dossiers patients anonymisés.",
+    "🫁 Info : La pneumonie est une complication majeure surveillée par notre algorithme.",
+    "🤖 IA : Ce modèle apprend des motifs complexes invisibles à l'œil nu."
+]
+
+loader_placeholder = st.empty()
+
+# Si les données ne sont pas chargées, on affiche l'animation
+if 'data_loaded' not in st.session_state:
+    fact = random.choice(medical_facts)
+    loader_placeholder.markdown(f"""
+    <style>
+        .loader-container {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 400px;
+            background-color: #0E1117;
+            border-radius: 15px;
+            border: 1px solid #262730;
+            padding: 20px;
+            text-align: center;
+        }}
+        .virus-loader {{
+            width: 80px;
+            height: 80px;
+            background-color: #EF553B;
+            border-radius: 50%;
+            position: relative;
+            animation: pulse-virus 1.5s infinite ease-in-out;
+            box-shadow: 0 0 20px #EF553B;
+            margin-bottom: 30px;
+        }}
+        .virus-loader::after {{
+            content: '';
+            position: absolute;
+            top: -10px; left: -10px; right: -10px; bottom: -10px;
+            border: 4px solid #00CC96;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+        }}
+        @keyframes pulse-virus {{
+            0% {{ transform: scale(0.95); opacity: 0.8; }}
+            50% {{ transform: scale(1.05); opacity: 1; }}
+            100% {{ transform: scale(0.95); opacity: 0.8; }}
+        }}
+        @keyframes spin {{
+            0% {{ transform: rotate(0deg); }}
+            100% {{ transform: rotate(360deg); }}
+        }}
+        .loading-text {{
+            color: #FAFAFA;
+            font-size: 24px;
+            font-weight: bold;
+            font-family: 'Inter', sans-serif;
+            margin-bottom: 10px;
+        }}
+        .fact-text {{
+            color: #00CC96;
+            font-style: italic;
+            font-size: 16px;
+            max-width: 600px;
+        }}
+    </style>
+    <div class="loader-container">
+        <div class="virus-loader"></div>
+        <div class="loading-text">Initialisation du Système d'IA...</div>
+        <div class="fact-text">{fact}</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Chargement réel
+    df_raw, df = load_data()
+    model = get_model(df)
+    
+    # Validation du chargement
+    st.session_state['data_loaded'] = True
+    loader_placeholder.empty()
+
+else:
+    # Si déjà chargé, on récupère directement (le cache gère la rapidité)
     df_raw, df = load_data()
     model = get_model(df)
 
@@ -316,13 +407,22 @@ elif page == "Exploration Intuitive":
 
         st.markdown("---")
         
+        # Optimisation : Échantillonnage pour les graphiques lourds si nécessaire
+        MAX_POINTS = 10000
+        if len(df_filtered) > MAX_POINTS:
+            df_viz = df_filtered.sample(MAX_POINTS, random_state=42)
+            st.toast(f"ℹ️ Optimisation : Affichage sur un échantillon de {MAX_POINTS} patients pour la fluidité.", icon="⚡")
+        else:
+            df_viz = df_filtered
+
         tab1, tab2, tab3 = st.tabs(["Facteurs de Risque", "Comorbidités", "Corrélation"])
         
         with tab1:
             c_bio1, c_bio2 = st.columns(2)
             with c_bio1:
                 st.markdown("**Distribution Âge**")
-                fig3 = px.histogram(df_filtered, x="AGE", color="DEATH_LABEL", nbins=50, 
+                # Utilisation de df_viz pour la rapidité
+                fig3 = px.histogram(df_viz, x="AGE", color="DEATH_LABEL", nbins=50, 
                                     color_discrete_map={'Survivant':'#00CC96', 'Décédé':'#EF553B'},
                                     barmode="overlay", opacity=0.7)
                 fig3.update_layout(xaxis_title="Âge", yaxis_title="Nombre", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -331,7 +431,8 @@ elif page == "Exploration Intuitive":
                 
             with c_bio2:
                 st.markdown("**Soins Intensifs (ICU)**")
-                df_icu = df_filtered[df_filtered['ICU_LABEL'].isin(['Oui', 'Non'])]
+                # Utilisation de df_viz pour la rapidité
+                df_icu = df_viz[df_viz['ICU_LABEL'].isin(['Oui', 'Non'])]
                 if not df_icu.empty:
                     fig4 = px.violin(df_icu, y="AGE", x="ICU_LABEL", color="ICU_LABEL", box=True, points=False,
                                      color_discrete_map={'Oui':'#EF553B', 'Non':'#3498db'})
@@ -344,6 +445,7 @@ elif page == "Exploration Intuitive":
             disease = st.selectbox("Choisir pathologies", ['DIABETES', 'ASTHMA', 'OBESITY', 'CARDIOVASCULAR', 'HIPERTENSION'])
             label_col = f'{disease}_LABEL'
             
+            # GroupBy est rapide, on peut utiliser tout le dataset filtré pour garder la précision
             if label_col in df_filtered.columns:
                 group = df_filtered.groupby(label_col)['DEATH'].mean().reset_index()
                 group['Taux Mortalité (%)'] = group['DEATH'] * 100
@@ -356,7 +458,8 @@ elif page == "Exploration Intuitive":
 
         with tab3:
             if st.button("Voir Matrice"):
-                num_df = df_filtered.select_dtypes(include=[np.number])
+                # Corr peut être lent sur 500k lignes, on utilise df_viz
+                num_df = df_viz.select_dtypes(include=[np.number])
                 corr = num_df.corr()
                 
                 fig6 = px.imshow(corr, text_auto=".2f", color_continuous_scale='RdBu_r', aspect="auto")
