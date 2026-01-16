@@ -7,8 +7,6 @@ import time
 import random
 import plotly.express as px
 from pathlib import Path
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -79,95 +77,82 @@ st.markdown("""
 
 # --- DATA LOADING ---
 @st.cache_data(ttl="2h")
-def load_data():
+def load_raw_preview(nrows: int = 20_000) -> pd.DataFrame:
+    """Aperçu des données brutes pour l'affichage uniquement (léger)."""
     try:
-        # Optimisation Cloud: on évite de charger 100% du CSV au démarrage
-        # tout en limitant les colonnes pour réduire mémoire/temps.
-        usecols = [
-            'USMER', 'MEDICAL_UNIT', 'SEX', 'PATIENT_TYPE', 'INTUBED', 'PNEUMONIA',
-            'AGE', 'PREGNANT', 'DIABETES', 'COPD', 'ASTHMA', 'INMSUPR',
-            'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 'OBESITY',
-            'RENAL_CHRONIC', 'TOBACCO', 'CLASIFFICATION_FINAL', 'ICU', 'DATE_DIED'
-        ]
+        df_raw = pd.read_csv('data/covid19_data.csv', nrows=nrows)
+    except Exception:
+        return pd.DataFrame()
 
-        # Load Raw Data - Optimisation avec pyarrow si disponible
-        try:
-            df_raw_source = pd.read_csv(
-                'data/covid19_data.csv',
-                engine='pyarrow',
-                usecols=usecols,
-            )
-        except Exception:
-            df_raw_source = pd.read_csv(
-                'data/covid19_data.csv',
-                usecols=usecols,
-                low_memory=False,
-            )
-    except Exception as e:
-        st.error("Erreur : Le fichier 'data/covid19_data.csv' est introuvable.")
-        return pd.DataFrame(), pd.DataFrame()
-
-    # --- 1. RAW DATA (For Display Only) ---
-    df_raw = df_raw_source.copy()
-    
-    # Simple Label Mapping for Raw View
     map_dict = {1: 'Oui', 2: 'Non', 97: 'Inconnu', 99: 'Inconnu'}
-    cols_to_map = ['PNEUMONIA', 'DIABETES', 'COPD', 'ASTHMA', 'INMSUPR', 
-    'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 'OBESITY', 'RENAL_CHRONIC', 
-    'TOBACCO', 'INTUBED', 'ICU']
-    
+    cols_to_map = [
+        'PNEUMONIA', 'DIABETES', 'COPD', 'ASTHMA', 'INMSUPR',
+        'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 'OBESITY',
+        'RENAL_CHRONIC', 'TOBACCO', 'INTUBED', 'ICU'
+    ]
     for col in cols_to_map:
         if col in df_raw.columns:
-            df_raw[f'{col}_LABEL'] = df_raw[col].map(map_dict).fillna("Inconnu")
-        
-    df_raw['SEX_LABEL'] = df_raw['SEX'].map({1: 'Femme', 2: 'Homme'})
-    df_raw['PATIENT_TYPE_LABEL'] = df_raw['PATIENT_TYPE'].map({1: 'Domicile', 2: 'Hospitalisation'})
-    df_raw['DEATH'] = np.where(df_raw['DATE_DIED'] == '9999-99-99', 0, 1)
-    df_raw['DEATH_LABEL'] = df_raw['DEATH'].map({0: 'Survivant', 1: 'Décédé'})
+            df_raw[f'{col}_LABEL'] = df_raw[col].map(map_dict).fillna('Inconnu')
 
-    # --- 2. CLEANED DATA (Strict Logic) ---
-    df_clean = df_raw_source.copy()
-    
-    # Step 1: Normalisation
-    colToNormaliseYoN = [col for col in df_clean.columns if col not in ['AGE', 'DATE_DIED','MEDICAL_UNIT','CLASIFFICATION_FINAL']]
-    df_clean[colToNormaliseYoN] = df_clean[colToNormaliseYoN].replace({2.0: 0, 1.0: 1})
-    
-    # Step 2: Remplacer 97, 98, 99 par NaN
-    colToCorrect = [col for col in df_clean.columns if col not in ['AGE', 'DATE_DIED']]
-    df_clean[colToCorrect] = df_clean[colToCorrect].replace({97: np.nan, 98: np.nan, 99: np.nan})
-    
-    # Step 3: Specific Logic
+    if 'SEX' in df_raw.columns:
+        df_raw['SEX_LABEL'] = df_raw['SEX'].map({1: 'Femme', 2: 'Homme'})
+    if 'PATIENT_TYPE' in df_raw.columns:
+        df_raw['PATIENT_TYPE_LABEL'] = df_raw['PATIENT_TYPE'].map({1: 'Domicile', 2: 'Hospitalisation'})
+    if 'DATE_DIED' in df_raw.columns:
+        df_raw['DEATH'] = np.where(df_raw['DATE_DIED'] == '9999-99-99', 0, 1)
+        df_raw['DEATH_LABEL'] = df_raw['DEATH'].map({0: 'Survivant', 1: 'Décédé'})
+    return df_raw
+
+
+@st.cache_data(ttl="2h")
+def load_clean_data() -> pd.DataFrame:
+    """Charge TOUT le CSV et produit le dataset nettoyé, en minimisant RAM/temps."""
+    usecols = [
+        'USMER', 'MEDICAL_UNIT', 'SEX', 'PATIENT_TYPE', 'INTUBED', 'PNEUMONIA',
+        'AGE', 'PREGNANT', 'DIABETES', 'COPD', 'ASTHMA', 'INMSUPR',
+        'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 'OBESITY',
+        'RENAL_CHRONIC', 'TOBACCO', 'CLASIFFICATION_FINAL', 'ICU', 'DATE_DIED'
+    ]
+
+    try:
+        try:
+            df_clean = pd.read_csv('data/covid19_data.csv', engine='pyarrow', usecols=usecols)
+        except Exception:
+            df_clean = pd.read_csv('data/covid19_data.csv', usecols=usecols, low_memory=False)
+    except Exception:
+        st.error("Erreur : Le fichier 'data/covid19_data.csv' est introuvable.")
+        return pd.DataFrame()
+
+    # Normalisation Oui/Non
+    cols_to_normalize = [c for c in df_clean.columns if c not in ['AGE', 'DATE_DIED', 'MEDICAL_UNIT', 'CLASIFFICATION_FINAL']]
+    df_clean[cols_to_normalize] = df_clean[cols_to_normalize].replace({2.0: 0, 1.0: 1})
+
+    # Remplacer 97/98/99 par NaN
+    cols_to_correct = [c for c in df_clean.columns if c not in ['AGE', 'DATE_DIED']]
+    df_clean[cols_to_correct] = df_clean[cols_to_correct].replace({97: np.nan, 98: np.nan, 99: np.nan})
+
+    # Règles métier
     df_clean.loc[df_clean['SEX'] == 0, 'PREGNANT'] = 0
-    
-    cols = ['ICU', 'INTUBED']
-    for col in cols:
+    for col in ['ICU', 'INTUBED']:
         df_clean.loc[df_clean['PATIENT_TYPE'] == 1, col] = df_clean.loc[df_clean['PATIENT_TYPE'] == 1, col].fillna(0)
-        
-    # Step 4: Drop NaN
-    df_clean.dropna(inplace=True)
-    
-    # Step 5: Create DEATH column
-    df_clean['DEATH'] = df_clean['DATE_DIED'].apply(lambda x: 0 if x == '9999-99-99' else 1)
-    
-    # --- Post-Processing for App Features ---
-    binary_map = {1: 'Oui', 0: 'Non'}
-    sex_map = {1: 'Femme', 0: 'Homme'} 
-    pt_map = {1: 'Domicile', 0: 'Hospitalisation'} 
-    
-    for col in cols_to_map:
-        if col in df_clean.columns:
-            df_clean[f'{col}_LABEL'] = df_clean[col].map(binary_map)
-        
-    df_clean['SEX_LABEL'] = df_clean['SEX'].map(sex_map)
-    df_clean['PATIENT_TYPE_LABEL'] = df_clean['PATIENT_TYPE'].map(pt_map)
-    df_clean['DEATH_LABEL'] = df_clean['DEATH'].map({0: 'Survivant', 1: 'Décédé'})
-    
-    # Dates
-    df_clean['DATE_DIED_DT'] = df_clean['DATE_DIED'].replace('9999-99-99', np.nan)
-    df_clean['DATE_DIED_DT'] = pd.to_datetime(df_clean['DATE_DIED_DT'], dayfirst=True, errors='coerce')
-    df_clean['MOIS'] = df_clean['DATE_DIED_DT'].dt.to_period('M').astype(str)
 
-    return df_raw, df_clean
+    # Drop NaN (nettoyage strict)
+    df_clean = df_clean.dropna()
+
+    # Target
+    df_clean['DEATH'] = (df_clean['DATE_DIED'] != '9999-99-99').astype(int)
+
+    # Labels nécessaires à l'app (évite de dupliquer trop de colonnes)
+    df_clean['SEX_LABEL'] = df_clean['SEX'].map({1: 'Femme', 0: 'Homme'})
+    df_clean['PATIENT_TYPE_LABEL'] = df_clean['PATIENT_TYPE'].map({1: 'Domicile', 0: 'Hospitalisation'})
+    df_clean['DEATH_LABEL'] = df_clean['DEATH'].map({0: 'Survivant', 1: 'Décédé'})
+    df_clean['ICU_LABEL'] = df_clean['ICU'].map({1: 'Oui', 0: 'Non'})
+
+    # Mois (beaucoup plus rapide que to_datetime + to_period)
+    died = df_clean['DATE_DIED'].where(df_clean['DATE_DIED'] != '9999-99-99', pd.NA)
+    df_clean['MOIS'] = died.astype('string').str.slice(0, 7)
+
+    return df_clean
 
 # --- MODEL MANAGEMENT ---
 @st.cache_resource
@@ -267,7 +252,8 @@ if 'data_loaded' not in st.session_state:
     """, unsafe_allow_html=True)
     
     # Chargement réel
-    df_raw, df = load_data()
+    df_raw = load_raw_preview()
+    df = load_clean_data()
     model = get_model(df)
     
     # Validation du chargement
@@ -276,7 +262,8 @@ if 'data_loaded' not in st.session_state:
 
 else:
     # Si déjà chargé, on récupère directement (le cache gère la rapidité)
-    df_raw, df = load_data()
+    df_raw = load_raw_preview()
+    df = load_clean_data()
     model = get_model(df)
 
 # --- SIDEBAR & NAVIGATION ---
