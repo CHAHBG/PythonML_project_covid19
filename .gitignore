@@ -1,3 +1,11 @@
+.DS_Store
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+
+# Artifacts modèles (trop lourds pour Streamlit Cloud)
+mon_modele_covid.pkl
+
 # Python
 __pycache__/
 *.py[cod]

@@ -6,6 +6,7 @@ import joblib
 import time
 import random
 import plotly.express as px
+from pathlib import Path
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 
@@ -80,11 +81,31 @@ st.markdown("""
 @st.cache_data(ttl="2h")
 def load_data():
     try:
+        # Optimisation Cloud: on évite de charger 100% du CSV au démarrage
+        # (sinon risque de timeout / crash Streamlit Cloud).
+        usecols = [
+            'USMER', 'MEDICAL_UNIT', 'SEX', 'PATIENT_TYPE', 'INTUBED', 'PNEUMONIA',
+            'AGE', 'PREGNANT', 'DIABETES', 'COPD', 'ASTHMA', 'INMSUPR',
+            'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 'OBESITY',
+            'RENAL_CHRONIC', 'TOBACCO', 'CLASIFFICATION_FINAL', 'ICU', 'DATE_DIED'
+        ]
+        nrows = 200_000
+
         # Load Raw Data - Optimisation avec pyarrow si disponible
         try:
-            df_raw_source = pd.read_csv('data/covid19_data.csv', engine='pyarrow')
-        except:
-             df_raw_source = pd.read_csv('data/covid19_data.csv')
+            df_raw_source = pd.read_csv(
+                'data/covid19_data.csv',
+                engine='pyarrow',
+                usecols=usecols,
+                nrows=nrows,
+            )
+        except Exception:
+            df_raw_source = pd.read_csv(
+                'data/covid19_data.csv',
+                usecols=usecols,
+                nrows=nrows,
+                low_memory=False,
+            )
     except Exception as e:
         st.error("Erreur : Le fichier 'data/covid19_data.csv' est introuvable.")
         return pd.DataFrame(), pd.DataFrame()
@@ -154,41 +175,20 @@ def load_data():
 # --- MODEL MANAGEMENT ---
 @st.cache_resource
 def get_model(_df_clean):
-    # 1. OPTIMISATION : Tentative de chargement du modèle léger Joblib (stabilité Cloud)
-    try:
-        model = joblib.load('model_covid_rf.joblib')
-        return model
-    except Exception:
-        pass
+    # En production (Streamlit Cloud) on évite absolument le ré-entraînement au runtime.
+    joblib_path = Path('model_covid_rf.joblib')
+    if joblib_path.exists():
+        return joblib.load(joblib_path)
 
-    # 2. FALLBACK : Modèle Pickle original
-    try:
-        model = pickle.load(open('mon_modele_covid.pkl', 'rb'))
-        return model
-    except Exception:
-        # 3. DERNIER RECOURS : Réentraînement en direct
-        X = _df_clean.drop(columns=['DEATH', 'DATE_DIED', 'DATE_DIED_DT', 'MOIS'] + [c for c in _df_clean.columns if '_LABEL' in c])
-        y = _df_clean['DEATH']
-        
-        feature_order = ['USMER', 'MEDICAL_UNIT', 'SEX', 'PATIENT_TYPE', 'INTUBED', 
-                        'PNEUMONIA', 'AGE', 'PREGNANT', 'DIABETES', 'COPD', 'ASTHMA', 
-                        'INMSUPR', 'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 
-                        'OBESITY', 'RENAL_CHRONIC', 'TOBACCO', 'CLASIFFICATION_FINAL', 'ICU']
-        
-        # S'assurer que toutes les colonnes sont présentes
-        available_cols = [c for c in feature_order if c in X.columns]
-        X = X[available_cols]
-        
-        if len(X) > 100000:
-            X_sample = X.sample(n=50000, random_state=42)
-            y_sample = y.loc[X_sample.index]
-            model = RandomForestClassifier(n_estimators=50, random_state=42)
-            model.fit(X_sample, y_sample)
-        else:
-            model = RandomForestClassifier(n_estimators=50, random_state=42)
-            model.fit(X, y)
-            
-        return model
+    # Fallback local uniquement (on ne versionne pas le pickle sur Cloud)
+    pickle_path = Path('mon_modele_covid.pkl')
+    if pickle_path.exists():
+        # Garde-fou: si le pickle est énorme, il a tendance à faire crasher le Cloud
+        if pickle_path.stat().st_size <= 150 * 1024 * 1024:
+            return pickle.load(open(pickle_path, 'rb'))
+
+    st.error("❌ Modèle introuvable. Assurez-vous que 'model_covid_rf.joblib' est présent dans le dépôt.")
+    return None
 
 # --- INIT LOADING & SPLASH SCREEN ---
 # Astuces éducatives pendant le chargement
@@ -365,11 +365,11 @@ if page == "Accueil":
     
     with tab_raw:
         st.info("Données brutes avec valeurs manquantes.")
-        st.dataframe(df_raw.head(50), use_container_width=True)
+        st.dataframe(df_raw.head(50), width='stretch')
         
     with tab_clean:
         st.success("Données nettoyées et normalisées (0/1).")
-        st.dataframe(df.head(50), use_container_width=True)
+        st.dataframe(df.head(50), width='stretch')
 
 # --- PAGE 2: EXPLORATION INTUITIVE ---
 elif page == "Exploration Intuitive":
@@ -389,7 +389,7 @@ elif page == "Exploration Intuitive":
                           color='Statut', color_discrete_map={'Survivant':'#00CC96', 'Décédé':'#EF553B'})
             fig1.update_traces(textinfo='percent+label')
             fig1.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig1, use_container_width=True)
+            st.plotly_chart(fig1, width='stretch')
         
         with col_R:
             st.markdown("#### 📈 Tendance Temporelle (Décès)")
@@ -403,7 +403,7 @@ elif page == "Exploration Intuitive":
                 fig2.update_traces(line_color='#EF553B', line_width=3)
                 fig2.update_layout(xaxis_title=None, yaxis_title=None, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                                   xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor='#444'))
-                st.plotly_chart(fig2, use_container_width=True)
+                st.plotly_chart(fig2, width='stretch')
 
         st.markdown("---")
         
@@ -427,7 +427,7 @@ elif page == "Exploration Intuitive":
                                     barmode="overlay", opacity=0.7)
                 fig3.update_layout(xaxis_title="Âge", yaxis_title="Nombre", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                                    font=dict(color="white"), legend_title="Statut")
-                st.plotly_chart(fig3, use_container_width=True)
+                st.plotly_chart(fig3, width='stretch')
                 
             with c_bio2:
                 st.markdown("**Soins Intensifs (ICU)**")
@@ -438,7 +438,7 @@ elif page == "Exploration Intuitive":
                                      color_discrete_map={'Oui':'#EF553B', 'Non':'#3498db'})
                     fig4.update_layout(xaxis_title="Admission en Réa", yaxis_title="Âge", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                                        font=dict(color="white"), showlegend=False)
-                    st.plotly_chart(fig4, use_container_width=True)
+                    st.plotly_chart(fig4, width='stretch')
 
         with tab2:
             st.markdown("**Impact des Pathologies**")
@@ -454,7 +454,7 @@ elif page == "Exploration Intuitive":
                               color_continuous_scale='Reds')
                 fig5.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", 
                                    font=dict(color="white"))
-                st.plotly_chart(fig5, use_container_width=True)
+                st.plotly_chart(fig5, width='stretch')
 
         with tab3:
             if st.button("Voir Matrice"):
@@ -465,7 +465,7 @@ elif page == "Exploration Intuitive":
                 fig6 = px.imshow(corr, text_auto=".2f", color_continuous_scale='RdBu_r', aspect="auto")
                 fig6.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                                    font=dict(color="white"))
-                st.plotly_chart(fig6, use_container_width=True)
+                st.plotly_chart(fig6, width='stretch')
 
 # --- PAGE 3: DIAGNOSTIC IA ---
 elif page == "Diagnostic IA":
@@ -613,4 +613,4 @@ elif page == "Méthodologie & Insights":
     }
     df_perf = pd.DataFrame(perf_data)
     # Highlight max
-    st.dataframe(df_perf.style.highlight_max(axis=0, color='#262730'), use_container_width=True)
+    st.dataframe(df_perf.style.highlight_max(axis=0, color='#262730'), width='stretch')
