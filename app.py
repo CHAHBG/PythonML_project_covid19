@@ -3,20 +3,14 @@ import pandas as pd
 import numpy as np
 import pickle
 import plotly.express as px
-import os
 import warnings
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
+import joblib
 
 # Réduit le bruit des logs (Streamlit Cloud)
 warnings.filterwarnings(
     "ignore",
     message=r"X does not have valid feature names, but .* was fitted with feature names",
 )
-
-# Limites pour Streamlit Cloud (évite OOM/crash)
-MAX_ROWS = int(os.getenv("MAX_ROWS", "200000"))
-MAX_MODEL_MB = int(os.getenv("MAX_MODEL_MB", "80"))
 
 # Configuration Streamlit
 st.set_page_config(
@@ -79,41 +73,7 @@ st.markdown("""
 @st.cache_resource
 def load_data():
     try:
-        # Lecture limitée pour éviter les crashes sur Streamlit Cloud
-        # (le CSV complet est volumineux en mémoire une fois chargé par pandas)
-        dtype_map = {
-            'USMER': 'int16',
-            'MEDICAL_UNIT': 'int16',
-            'SEX': 'int16',
-            'PATIENT_TYPE': 'int16',
-            'INTUBED': 'int16',
-            'PNEUMONIA': 'int16',
-            'AGE': 'int16',
-            'PREGNANT': 'int16',
-            'DIABETES': 'int16',
-            'COPD': 'int16',
-            'ASTHMA': 'int16',
-            'INMSUPR': 'int16',
-            'HIPERTENSION': 'int16',
-            'OTHER_DISEASE': 'int16',
-            'CARDIOVASCULAR': 'int16',
-            'OBESITY': 'int16',
-            'RENAL_CHRONIC': 'int16',
-            'TOBACCO': 'int16',
-            'CLASIFFICATION_FINAL': 'int16',
-            'ICU': 'int16',
-        }
-        df_raw_source = pd.read_csv(
-            'data/covid19_data.csv',
-            nrows=MAX_ROWS,
-            dtype=dtype_map,
-        )
-
-        # On ne garde que les patients COVID Positifs (Class 1, 2, 3)
-        if 'CLASIFFICATION_FINAL' in df_raw_source.columns:
-            print(f"Patients total : {len(df_raw_source)}")
-            df_raw_source = df_raw_source[df_raw_source['CLASIFFICATION_FINAL'] < 4]
-            print(f"Patients COVID+ uniquement : {len(df_raw_source)}")
+        df_raw_source = pd.read_csv('data/covid19_data.csv')
     except Exception as e:
         st.error("Erreur : Le fichier 'data/covid19_data.csv' est introuvable.")
         return pd.DataFrame(), pd.DataFrame()
@@ -180,47 +140,28 @@ def load_data():
 
 # Modèle
 @st.cache_resource
-def get_model(_df_clean):
+def get_model():
+    """Charge le modèle pré-entraîné.
+
+    Important : sur Streamlit Cloud, Git LFS n'est pas toujours disponible.
+    On utilise donc un artefact léger en `.joblib` versionné dans le dépôt.
+    """
+
+    # Modèle recommandé (léger)
     try:
-        model_path = 'mon_modele_covid.pkl'
-        if os.path.exists(model_path):
-            size_mb = os.path.getsize(model_path) / (1024 * 1024)
-            # Un pickle trop gros fait souvent planter Streamlit Cloud (RAM limitée)
-            if size_mb <= MAX_MODEL_MB:
-                model = pickle.load(open(model_path, 'rb'))
-                return model
-            st.warning(
-                f"Modèle ignoré (taille {size_mb:.0f} MB > {MAX_MODEL_MB} MB). "
-                "Ré-entraînement léger en cours..."
-            )
-        else:
-            st.warning("Modèle 'mon_modele_covid.pkl' introuvable. Ré-entraînement léger en cours...")
+        return joblib.load('model_covid_rf.joblib')
     except Exception:
-        # Secours : ré-entraînement rapide si le .pkl est absent
-        X = _df_clean.drop(columns=['DEATH', 'DATE_DIED', 'DATE_DIED_DT', 'MOIS'] + [c for c in _df_clean.columns if '_LABEL' in c])
-        y = _df_clean['DEATH']
-        
-        feature_order = ['USMER', 'MEDICAL_UNIT', 'SEX', 'PATIENT_TYPE', 'INTUBED', 
-                        'PNEUMONIA', 'AGE', 'PREGNANT', 'DIABETES', 'COPD', 'ASTHMA', 
-                        'INMSUPR', 'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 
-                        'OBESITY', 'RENAL_CHRONIC', 'TOBACCO', 'CLASIFFICATION_FINAL', 'ICU']
-        
-        X = X[feature_order]
-        
-        if len(X) > 100000:
-            X_sample = X.sample(n=50000, random_state=42)
-            y_sample = y.loc[X_sample.index]
-            model = RandomForestClassifier(n_estimators=50, random_state=42)
-            model.fit(X_sample, y_sample)
-        else:
-            model = RandomForestClassifier(n_estimators=50, random_state=42)
-            model.fit(X, y)
-            
-        return model
+        pass
+
+    # Compatibilité locale (ancien modèle)
+    try:
+        return pickle.load(open('mon_modele_covid.pkl', 'rb'))
+    except Exception:
+        return None
 
 # Chargement (données + modèle)
 df_raw, df = load_data()
-model = get_model(df)
+model = get_model()
 
 # Navigation
 st.sidebar.title("Navigation")
