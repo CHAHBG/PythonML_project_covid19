@@ -415,10 +415,18 @@ elif page == "Diagnostic IA":
             0  # ICU (Assume 0 if not specified, or add checkbox? Let's assume correlated with Intubation/Hospital)
         ]
         
+        # Create DataFrame with proper column names (matching training data)
+        feature_names = ['USMER', 'MEDICAL_UNIT', 'SEX', 'PATIENT_TYPE', 'INTUBED', 
+                        'PNEUMONIA', 'AGE', 'PREGNANT', 'DIABETES', 'COPD', 'ASTHMA', 
+                        'INMSUPR', 'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 
+                        'OBESITY', 'RENAL_CHRONIC', 'TOBACCO', 'CLASIFFICATION_FINAL', 'ICU']
+        
+        feat_df = pd.DataFrame([feat], columns=feature_names)
+        
         model = load_model()
         if model:
             try:
-                prob = model.predict_proba([feat])[0][1] * 100
+                prob = model.predict_proba(feat_df)[0][1] * 100
                 
                 cR1, cR2 = st.columns([1,2])
                 with cR1:
