@@ -3,17 +3,22 @@ import pandas as pd
 import numpy as np
 import pickle
 import plotly.express as px
+import os
 import warnings
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 
-# Silence noisy sklearn warning in hosted logs
+# Réduit le bruit des logs (Streamlit Cloud)
 warnings.filterwarnings(
     "ignore",
     message=r"X does not have valid feature names, but .* was fitted with feature names",
 )
 
-# --- PAGE CONFIGURATION ---
+# Limites pour Streamlit Cloud (évite OOM/crash)
+MAX_ROWS = int(os.getenv("MAX_ROWS", "200000"))
+MAX_MODEL_MB = int(os.getenv("MAX_MODEL_MB", "80"))
+
+# Configuration Streamlit
 st.set_page_config(
     page_title="COVID-19 Analytics",
     page_icon="🧬",
@@ -21,16 +26,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- MODERN DARK THEME CSS ---
+# Style (CSS)
 st.markdown("""
 <style>
-    /* Global App Background */
+    /* Fond de l'application */
     .stApp {
         background-color: #0E1117;
         color: #FAFAFA;
     }
     
-    /* Card Styling */
+    /* Cartes */
     .metric-card {
         background-color: #262730;
         border: 1px solid #41444C;
@@ -53,7 +58,7 @@ st.markdown("""
         font-weight: 500;
     }
     
-    /* Team Card Styling */
+    /* Carte équipe */
     .team-card {
         background-color: #1E1E1E;
         padding: 15px;
@@ -62,7 +67,7 @@ st.markdown("""
         margin-bottom: 10px;
     }
     
-    /* Headers */
+    /* Titres */
     h1, h2, h3, h4 {
         color: #FFFFFF !important;
         font-family: 'Inter', sans-serif;
@@ -70,20 +75,46 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- DATA LOADING ---
+# Chargement et préparation des données
 @st.cache_resource
 def load_data():
     try:
-        # Load Raw Data
-        df_raw_source = pd.read_csv('data/covid19_data.csv')
+        # Lecture limitée pour éviter les crashes sur Streamlit Cloud
+        # (le CSV complet est volumineux en mémoire une fois chargé par pandas)
+        dtype_map = {
+            'USMER': 'int16',
+            'MEDICAL_UNIT': 'int16',
+            'SEX': 'int16',
+            'PATIENT_TYPE': 'int16',
+            'INTUBED': 'int16',
+            'PNEUMONIA': 'int16',
+            'AGE': 'int16',
+            'PREGNANT': 'int16',
+            'DIABETES': 'int16',
+            'COPD': 'int16',
+            'ASTHMA': 'int16',
+            'INMSUPR': 'int16',
+            'HIPERTENSION': 'int16',
+            'OTHER_DISEASE': 'int16',
+            'CARDIOVASCULAR': 'int16',
+            'OBESITY': 'int16',
+            'RENAL_CHRONIC': 'int16',
+            'TOBACCO': 'int16',
+            'CLASIFFICATION_FINAL': 'int16',
+            'ICU': 'int16',
+        }
+        df_raw_source = pd.read_csv(
+            'data/covid19_data.csv',
+            nrows=MAX_ROWS,
+            dtype=dtype_map,
+        )
     except Exception as e:
         st.error("Erreur : Le fichier 'data/covid19_data.csv' est introuvable.")
         return pd.DataFrame(), pd.DataFrame()
 
-    # --- 1. RAW DATA (For Display Only) ---
+    # Données brutes (affichage)
     df_raw = df_raw_source.copy()
     
-    # Simple Label Mapping for Raw View
     map_dict = {1: 'Oui', 2: 'Non', 97: 'Inconnu', 99: 'Inconnu'}
     cols_to_map = ['PNEUMONIA', 'DIABETES', 'COPD', 'ASTHMA', 'INMSUPR', 
     'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 'OBESITY', 'RENAL_CHRONIC', 
@@ -98,31 +129,30 @@ def load_data():
     df_raw['DEATH'] = np.where(df_raw['DATE_DIED'] == '9999-99-99', 0, 1)
     df_raw['DEATH_LABEL'] = df_raw['DEATH'].map({0: 'Survivant', 1: 'Décédé'})
 
-    # --- 2. CLEANED DATA (Strict Logic) ---
+    # Données nettoyées (logique du notebook)
     df_clean = df_raw_source.copy()
     
-    # Step 1: Normalisation
+    # Normalisation 1/2 -> 1/0
     colToNormaliseYoN = [col for col in df_clean.columns if col not in ['AGE', 'DATE_DIED','MEDICAL_UNIT','CLASIFFICATION_FINAL']]
     df_clean[colToNormaliseYoN] = df_clean[colToNormaliseYoN].replace({2.0: 0, 1.0: 1})
     
-    # Step 2: Remplacer 97, 98, 99 par NaN
+    # Valeurs manquantes (97/98/99)
     colToCorrect = [col for col in df_clean.columns if col not in ['AGE', 'DATE_DIED']]
     df_clean[colToCorrect] = df_clean[colToCorrect].replace({97: np.nan, 98: np.nan, 99: np.nan})
     
-    # Step 3: Specific Logic
+    # Règles métier
     df_clean.loc[df_clean['SEX'] == 0, 'PREGNANT'] = 0
     
     cols = ['ICU', 'INTUBED']
     for col in cols:
         df_clean.loc[df_clean['PATIENT_TYPE'] == 1, col] = df_clean.loc[df_clean['PATIENT_TYPE'] == 1, col].fillna(0)
         
-    # Step 4: Drop NaN
     df_clean.dropna(inplace=True)
     
-    # Step 5: Create DEATH column
+    # Cible
     df_clean['DEATH'] = df_clean['DATE_DIED'].apply(lambda x: 0 if x == '9999-99-99' else 1)
     
-    # --- Post-Processing for App Features ---
+    # Variables dérivées pour l'app
     binary_map = {1: 'Oui', 0: 'Non'}
     sex_map = {1: 'Femme', 0: 'Homme'} 
     pt_map = {1: 'Domicile', 0: 'Hospitalisation'} 
@@ -142,14 +172,25 @@ def load_data():
 
     return df_raw, df_clean
 
-# --- MODEL MANAGEMENT ---
+# Modèle
 @st.cache_resource
 def get_model(_df_clean):
     try:
-        model = pickle.load(open('mon_modele_covid.pkl', 'rb'))
-        return model
+        model_path = 'mon_modele_covid.pkl'
+        if os.path.exists(model_path):
+            size_mb = os.path.getsize(model_path) / (1024 * 1024)
+            # Un pickle trop gros fait souvent planter Streamlit Cloud (RAM limitée)
+            if size_mb <= MAX_MODEL_MB:
+                model = pickle.load(open(model_path, 'rb'))
+                return model
+            st.warning(
+                f"Modèle ignoré (taille {size_mb:.0f} MB > {MAX_MODEL_MB} MB). "
+                "Ré-entraînement léger en cours..."
+            )
+        else:
+            st.warning("Modèle 'mon_modele_covid.pkl' introuvable. Ré-entraînement léger en cours...")
     except Exception:
-        # Re-training Fallback
+        # Secours : ré-entraînement rapide si le .pkl est absent
         X = _df_clean.drop(columns=['DEATH', 'DATE_DIED', 'DATE_DIED_DT', 'MOIS'] + [c for c in _df_clean.columns if '_LABEL' in c])
         y = _df_clean['DEATH']
         
@@ -171,11 +212,11 @@ def get_model(_df_clean):
             
         return model
 
-# Load Data & Model
+# Chargement (données + modèle)
 df_raw, df = load_data()
 model = get_model(df)
 
-# --- SIDEBAR & NAVIGATION ---
+# Navigation
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Aller vers :", 
     ["Accueil", "Exploration Intuitive", "Diagnostic IA", "Méthodologie & Insights"]
@@ -191,7 +232,7 @@ st.sidebar.markdown("""
 """)
 
 st.sidebar.markdown("---")
-# --- GLOBAL FILTERS ---
+# Filtres
 df_filtered = df.copy()
 
 if page == "Exploration Intuitive" and not df.empty:
@@ -206,12 +247,11 @@ if page == "Exploration Intuitive" and not df.empty:
     df_filtered = df[mask]
     st.sidebar.markdown(f"**{len(df_filtered):,} patients sélectionnés**")
 
-# --- PAGE 1: ACCUEIL ---
+# Pages
 if page == "Accueil":
     st.title("🦠 Plateforme Analytics COVID-19")
     st.markdown("### 🏥 Tableau de Bord Stratégique")
     
-    # 1. TEAM SECTION
     st.markdown("---")
     st.subheader("👥 L'Équipe de Réalisation")
     
@@ -225,7 +265,6 @@ if page == "Accueil":
     with c4:
         st.info("**Loua Franck DIOMANDE**")
     
-    # 2. METRICS
     if not df.empty:
         st.markdown("---")
         c1, c2, c3, c4 = st.columns(4)
