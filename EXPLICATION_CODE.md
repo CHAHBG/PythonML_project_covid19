@@ -1,5 +1,11 @@
 # 📘 Guide Complet du Code : Comprendre & Réutiliser `app.py`
 
+## 👥 Concepteurs (Équipe Projet)
+- **Cheikh A. B. GNINGUE**
+- **Jean Paul I. MALAN**
+- **Grace KOFFI**
+- **Loua F. DIOMANDE**
+
 Ce guide décortique le fichier `app.py` bloc par bloc. Pour chaque partie, vous trouverez :
 1.  **Le Code** : L'extrait important.
 2.  **L'Utilité** : À quoi ça sert ?
@@ -27,19 +33,32 @@ st.set_page_config(
 C'est crucial pour la vitesse.
 
 ```python
-@st.cache_resource
-def load_data():
-    df = pd.read_csv('data/covid19_data.csv')
-    # ... nettoyage ...
-    return df
+# Aperçu (léger) pour affichage
+@st.cache_data(ttl="2h")
+def load_raw_preview(nrows: int = 20_000) -> pd.DataFrame:
+    df_raw = pd.read_csv('data/covid19_data.csv', nrows=nrows)
+    return df_raw
+
+# Dataset nettoyé (complet) pour analyses
+@st.cache_data(ttl="2h")
+def load_clean_data() -> pd.DataFrame:
+    df_clean = pd.read_csv('data/covid19_data.csv', usecols=[...])
+    # ... normalisation / règles métier / dropna strict ...
+    return df_clean
+
+# Dataset minimal (sans dropna strict) pour la tendance temporelle
+@st.cache_data(ttl="2h")
+def load_time_data() -> pd.DataFrame:
+    df_time = pd.read_csv('data/covid19_data.csv', usecols=['AGE','SEX','PATIENT_TYPE','DATE_DIED'])
+    return df_time
 ```
-*   **Utilité :** `@st.cache_resource` est une "boîte magique". La première fois, Streamlit lit le fichier (c'est lent). La deuxième fois, il se souvient du résultat (c'est instantané). Sans ça, l'app serait lente à chaque clic.
-*   **Comment le réutiliser :** Utilisez toujours `@st.cache_resource` ou `@st.cache_data` avant vos fonctions qui chargent des fichiers lourds (Excel, CSV, Base de données).
+*   **Utilité :** `@st.cache_data` garde le résultat en mémoire (et sur disque selon Streamlit) pour éviter de relire / recalculer à chaque interaction.
+*   **Comment le réutiliser :** Placez `@st.cache_data` sur les fonctions de lecture (CSV/Excel/SQL) et sur les transformations coûteuses. Utilisez un `ttl` si vous voulez que le cache se rafraîchisse automatiquement.
 
 ---
 
 ## 3. Le Nettoyage de Données (Data Cleaning)
-Dans `load_data`, on a ce genre de logique :
+Dans `load_clean_data` et `load_raw_preview`, on a ce genre de logique :
 
 ```python
 map_dict = {1: 'Oui', 2: 'Non', 97: 'Inconnu'}
@@ -47,6 +66,23 @@ df['DIABETES_LABEL'] = df['DIABETES'].map(map_dict)
 ```
 *   **Utilité :** Les ordinateurs aiment les chiffres (1, 2), les humains aiment les mots ("Oui", "Non"). On crée des nouvelles colonnes (`_LABEL`) juste pour l'affichage, tout en gardant les originaux pour les calculs.
 *   **Comment le réutiliser :** Dans tous vos projets, séparez les données de calcul (chiffres) des données d'affichage (textes). Créez des dictionnaires `map_dict` pour traduire vos codes.
+
+### ✅ Calcul des décès (colonne `DEATH`)
+Dans ce projet, on ne "fabrique" pas de décès : on suit la convention du dataset.
+
+```python
+# Dans le CSV, DATE_DIED = '9999-99-99' signifie : pas décédé
+df['DEATH'] = (df['DATE_DIED'] != '9999-99-99').astype(int)
+```
+
+* **Interprétation :**
+    * `DEATH = 1` ⟶ patient décédé, et `DATE_DIED` contient une vraie date.
+    * `DEATH = 0` ⟶ patient non décédé, `DATE_DIED` vaut `'9999-99-99'`.
+
+### 📉 Pourquoi une “chute brutale” peut apparaître sur la courbe
+Le nettoyage strict (`dropna()`) dans `load_clean_data()` peut supprimer énormément de lignes (donc de décès) si certaines colonnes (comorbidités) ont des valeurs manquantes.
+
+👉 Pour éviter un biais sur la **tendance temporelle des décès**, l’app calcule la courbe à partir de `load_time_data()` (sous-jeu minimal) au lieu de `load_clean_data()`.
 
 ---
 
@@ -87,7 +123,7 @@ C'est le cœur intelligent.
 
 ```python
 # 1. Chargement
-model = pickle.load(open('mon_modele_covid.pkl', 'rb'))
+model = joblib.load('model_covid_rf.joblib')
 
 # 2. Préparation des données saisies par l'utilisateur
 # L'utilisateur coche "Diabète" (Vrai/Faux) -> On traduit en 1 ou 0
@@ -100,8 +136,8 @@ prob = model.predict_proba([feat])[0][1] # Probabilité de la classe 1 (Décès)
 *   **Utilité :** Connecte l'interface visuelle (les boutons) au cerveau mathématique (le fichier `.pkl`).
 *   **Comment le réutiliser :**
     1.  Entraînez votre modèle dans un Notebook (Jupyter).
-    2.  Sauvegardez-le avec `pickle.dump()`.
-    3.  Chargez-le dans Streamlit avec `pickle.load()`.
+    2.  Sauvegardez-le avec `joblib.dump()` (souvent plus robuste pour scikit-learn).
+    3.  Chargez-le dans Streamlit avec `joblib.load()`.
     4.  **Important :** L'ordre des variables dans `feat` doit être *exactement* le même que lors de l'entraînement.
 
 ---
