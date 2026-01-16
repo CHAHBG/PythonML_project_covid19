@@ -148,9 +148,22 @@ def load_clean_data() -> pd.DataFrame:
     df_clean['DEATH_LABEL'] = df_clean['DEATH'].map({0: 'Survivant', 1: 'Décédé'})
     df_clean['ICU_LABEL'] = df_clean['ICU'].map({1: 'Oui', 0: 'Non'})
 
-    # Mois (beaucoup plus rapide que to_datetime + to_period)
+    # Colonnes label pour les graphiques (Comorbidités, etc.)
+    binary_map = {1: 'Oui', 0: 'Non'}
+    cols_to_label = [
+        'PNEUMONIA', 'DIABETES', 'COPD', 'ASTHMA', 'INMSUPR',
+        'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 'OBESITY',
+        'RENAL_CHRONIC', 'TOBACCO', 'INTUBED', 'ICU'
+    ]
+    for col in cols_to_label:
+        if col in df_clean.columns:
+            # Catégorie = beaucoup plus léger qu'une colonne string classique
+            df_clean[f'{col}_LABEL'] = pd.Categorical(df_clean[col].map(binary_map), categories=['Non', 'Oui'])
+
+    # Mois (rapide) + filtre de validité YYYY-MM pour éviter des axes "mélangés"
     died = df_clean['DATE_DIED'].where(df_clean['DATE_DIED'] != '9999-99-99', pd.NA)
-    df_clean['MOIS'] = died.astype('string').str.slice(0, 7)
+    mois = died.astype('string').str.slice(0, 7)
+    df_clean['MOIS'] = mois.where(mois.str.match(r'^\d{4}-\d{2}$', na=False))
 
     return df_clean
 
@@ -377,17 +390,15 @@ elif page == "Exploration Intuitive":
         
         with col_R:
             st.markdown("#### 📈 Tendance Temporelle (Décès)")
-            df_time = df_filtered.loc[df_filtered['DEATH'] == 1].dropna(subset=['MOIS'])
+            df_time = df_filtered.loc[df_filtered['DEATH'] == 1]
             if not df_time.empty:
-                # Agrégation + tri chronologique (évite les dates "mélangées")
-                time_counts = (
-                    df_time.groupby('MOIS', dropna=True)
-                    .size()
-                    .reset_index(name='Décès')
-                )
-                time_counts['Mois_dt'] = pd.to_datetime(time_counts['MOIS'], format='%Y-%m', errors='coerce')
-                time_counts = time_counts.sort_values('Mois_dt')
-                time_counts['Mois'] = time_counts['Mois_dt'].dt.strftime('%Y-%m')
+                # Calcul depuis DATE_DIED (robuste) + tri chronologique
+                died_dt = pd.to_datetime(df_time['DATE_DIED'], errors='coerce')
+                mois = died_dt.dt.to_period('M').astype(str)
+                time_counts = mois.value_counts().reset_index()
+                time_counts.columns = ['Mois', 'Décès']
+                time_counts['Mois_dt'] = pd.to_datetime(time_counts['Mois'], format='%Y-%m', errors='coerce')
+                time_counts = time_counts.dropna(subset=['Mois_dt']).sort_values('Mois_dt')
 
                 fig2 = px.line(time_counts, x='Mois', y='Décès', markers=True,
                                labels={'Mois': 'Mois', 'Décès': 'Nombre de Décès'})
