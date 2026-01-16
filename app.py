@@ -3,8 +3,15 @@ import pandas as pd
 import numpy as np
 import pickle
 import plotly.express as px
+import warnings
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
+
+# Silence noisy sklearn warning in hosted logs
+warnings.filterwarnings(
+    "ignore",
+    message=r"X does not have valid feature names, but .* was fitted with feature names",
+)
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
