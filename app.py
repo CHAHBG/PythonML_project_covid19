@@ -167,6 +167,24 @@ def load_clean_data() -> pd.DataFrame:
 
     return df_clean
 
+
+@st.cache_data(ttl="2h")
+def load_time_data() -> pd.DataFrame:
+    """Dataset minimal pour la tendance temporelle (évite le biais du dropna strict)."""
+    usecols = ['AGE', 'SEX', 'PATIENT_TYPE', 'DATE_DIED']
+    try:
+        try:
+            df_time = pd.read_csv('data/covid19_data.csv', engine='pyarrow', usecols=usecols)
+        except Exception:
+            df_time = pd.read_csv('data/covid19_data.csv', usecols=usecols, low_memory=False)
+    except Exception:
+        return pd.DataFrame()
+
+    df_time['DEATH'] = (df_time['DATE_DIED'] != '9999-99-99').astype(int)
+    df_time['SEX_LABEL'] = df_time['SEX'].map({1: 'Femme', 2: 'Homme', 0: 'Homme'})
+    df_time['PATIENT_TYPE_LABEL'] = df_time['PATIENT_TYPE'].map({1: 'Domicile', 2: 'Hospitalisation', 0: 'Hospitalisation'})
+    return df_time
+
 # --- MODEL MANAGEMENT ---
 @st.cache_resource
 def get_model(_df_clean):
@@ -267,6 +285,7 @@ if 'data_loaded' not in st.session_state:
     # Chargement réel
     df_raw = load_raw_preview()
     df = load_clean_data()
+    df_time_all = load_time_data()
     model = get_model(df)
     
     # Validation du chargement
@@ -277,6 +296,7 @@ else:
     # Si déjà chargé, on récupère directement (le cache gère la rapidité)
     df_raw = load_raw_preview()
     df = load_clean_data()
+    df_time_all = load_time_data()
     model = get_model(df)
 
 # --- SIDEBAR & NAVIGATION ---
@@ -390,12 +410,23 @@ elif page == "Exploration Intuitive":
         
         with col_R:
             st.markdown("#### 📈 Tendance Temporelle (Décès)")
-            df_time = df_filtered.loc[df_filtered['DEATH'] == 1]
+            # IMPORTANT: on calcule la tendance sur un dataset minimal (AGE/SEX/PATIENT_TYPE/DATE_DIED)
+            # pour éviter le biais du dropna strict sur les comorbidités.
+            df_time = df_time_all.copy() if 'df_time_all' in globals() else pd.DataFrame()
             if not df_time.empty:
-                # Calcul depuis DATE_DIED (robuste) + tri chronologique
+                # Appliquer les mêmes filtres que l'exploration
+                mask_t = (df_time['AGE'] >= age_range[0]) & (df_time['AGE'] <= age_range[1])
+                if gender_sel:
+                    mask_t &= df_time['SEX_LABEL'].isin(gender_sel)
+                if pt_sel:
+                    mask_t &= df_time['PATIENT_TYPE_LABEL'].isin(pt_sel)
+
+                df_time = df_time.loc[mask_t & (df_time['DEATH'] == 1)]
+
+            if not df_time.empty:
                 died_dt = pd.to_datetime(df_time['DATE_DIED'], errors='coerce')
-                mois = died_dt.dt.to_period('M').astype(str)
-                time_counts = mois.value_counts().reset_index()
+                months = died_dt.dt.to_period('M').astype(str)
+                time_counts = months.value_counts().reset_index()
                 time_counts.columns = ['Mois', 'Décès']
                 time_counts['Mois_dt'] = pd.to_datetime(time_counts['Mois'], format='%Y-%m', errors='coerce')
                 time_counts = time_counts.dropna(subset=['Mois_dt']).sort_values('Mois_dt')
@@ -406,6 +437,8 @@ elif page == "Exploration Intuitive":
                 fig2.update_layout(xaxis_title=None, yaxis_title=None, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                                   xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor='#444'))
                 st.plotly_chart(fig2, width='stretch')
+            else:
+                st.info("Aucun décès disponible pour la tendance avec les filtres actuels.")
 
         st.markdown("---")
         
