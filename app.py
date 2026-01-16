@@ -90,7 +90,15 @@ st.sidebar.title("Navigation")
 page = st.sidebar.radio("Aller vers :", ["🏠 Accueil", "📊 Exploration Visuelle", "🔮 Prédiction IA"])
 
 st.sidebar.markdown("---")
-st.sidebar.info("Projet Data Science\n**Cheikh Ahmadou Bamba GNINGUE**")
+st.sidebar.info(
+    "Projet Data Science\n"
+    "\n"
+    "Concepteurs :\n"
+    "- Cheikh Ahmadou Bamba Gningue\n"
+    "- Koffi Grâce Amandine\n"
+    "- Jean Paul Ildevert Malan\n"
+    "- Diomade Loua"
+)
 
 # ==========================================
 # PAGE 1 : ACCUEIL
@@ -98,6 +106,11 @@ st.sidebar.info("Projet Data Science\n**Cheikh Ahmadou Bamba GNINGUE**")
 if page == "🏠 Accueil":
     st.title("🦠 Analyse des Risques COVID-19")
     st.markdown("### Bienvenue sur l'interface de prédiction médicale.")
+
+    st.markdown(
+        "**Concepteurs :**  "+
+        "Cheikh Ahmadou Bamba Gningue • Koffi Grâce Amandine • Jean Paul Ildevert Malan • Diomade Loua"
+    )
 
     st.success("👈 Commencez par explorer les données via le menu à gauche, ou passez directement à la prédiction.")
 
