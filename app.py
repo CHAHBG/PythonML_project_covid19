@@ -377,11 +377,18 @@ elif page == "Exploration Intuitive":
         
         with col_R:
             st.markdown("#### 📈 Tendance Temporelle (Décès)")
-            df_time = df_filtered[df_filtered['DEATH'] == 1]
+            df_time = df_filtered.loc[df_filtered['DEATH'] == 1].dropna(subset=['MOIS'])
             if not df_time.empty:
-                time_counts = df_time['MOIS'].value_counts().sort_index().reset_index()
-                time_counts.columns = ['Mois', 'Décès']
-                
+                # Agrégation + tri chronologique (évite les dates "mélangées")
+                time_counts = (
+                    df_time.groupby('MOIS', dropna=True)
+                    .size()
+                    .reset_index(name='Décès')
+                )
+                time_counts['Mois_dt'] = pd.to_datetime(time_counts['MOIS'], format='%Y-%m', errors='coerce')
+                time_counts = time_counts.sort_values('Mois_dt')
+                time_counts['Mois'] = time_counts['Mois_dt'].dt.strftime('%Y-%m')
+
                 fig2 = px.line(time_counts, x='Mois', y='Décès', markers=True,
                                labels={'Mois': 'Mois', 'Décès': 'Nombre de Décès'})
                 fig2.update_traces(line_color='#EF553B', line_width=3)
@@ -391,22 +398,13 @@ elif page == "Exploration Intuitive":
 
         st.markdown("---")
         
-        # Optimisation : Échantillonnage pour les graphiques lourds si nécessaire
-        MAX_POINTS = 10000
-        if len(df_filtered) > MAX_POINTS:
-            df_viz = df_filtered.sample(MAX_POINTS, random_state=42)
-            st.toast(f"ℹ️ Optimisation : Affichage sur un échantillon de {MAX_POINTS} patients pour la fluidité.", icon="⚡")
-        else:
-            df_viz = df_filtered
-
         tab1, tab2, tab3 = st.tabs(["Facteurs de Risque", "Comorbidités", "Corrélation"])
         
         with tab1:
             c_bio1, c_bio2 = st.columns(2)
             with c_bio1:
                 st.markdown("**Distribution Âge**")
-                # Utilisation de df_viz pour la rapidité
-                fig3 = px.histogram(df_viz, x="AGE", color="DEATH_LABEL", nbins=50, 
+                fig3 = px.histogram(df_filtered, x="AGE", color="DEATH_LABEL", nbins=50, 
                                     color_discrete_map={'Survivant':'#00CC96', 'Décédé':'#EF553B'},
                                     barmode="overlay", opacity=0.7)
                 fig3.update_layout(xaxis_title="Âge", yaxis_title="Nombre", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -415,8 +413,7 @@ elif page == "Exploration Intuitive":
                 
             with c_bio2:
                 st.markdown("**Soins Intensifs (ICU)**")
-                # Utilisation de df_viz pour la rapidité
-                df_icu = df_viz[df_viz['ICU_LABEL'].isin(['Oui', 'Non'])]
+                df_icu = df_filtered[df_filtered['ICU_LABEL'].isin(['Oui', 'Non'])]
                 if not df_icu.empty:
                     fig4 = px.violin(df_icu, y="AGE", x="ICU_LABEL", color="ICU_LABEL", box=True, points=False,
                                      color_discrete_map={'Oui':'#EF553B', 'Non':'#3498db'})
@@ -442,8 +439,7 @@ elif page == "Exploration Intuitive":
 
         with tab3:
             if st.button("Voir Matrice"):
-                # Corr peut être lent sur 500k lignes, on utilise df_viz
-                num_df = df_viz.select_dtypes(include=[np.number])
+                num_df = df_filtered.select_dtypes(include=[np.number])
                 corr = num_df.corr()
                 
                 fig6 = px.imshow(corr, text_auto=".2f", color_continuous_scale='RdBu_r', aspect="auto")
