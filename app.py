@@ -82,14 +82,13 @@ st.markdown("""
 def load_data():
     try:
         # Optimisation Cloud: on évite de charger 100% du CSV au démarrage
-        # (sinon risque de timeout / crash Streamlit Cloud).
+        # tout en limitant les colonnes pour réduire mémoire/temps.
         usecols = [
             'USMER', 'MEDICAL_UNIT', 'SEX', 'PATIENT_TYPE', 'INTUBED', 'PNEUMONIA',
             'AGE', 'PREGNANT', 'DIABETES', 'COPD', 'ASTHMA', 'INMSUPR',
             'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 'OBESITY',
             'RENAL_CHRONIC', 'TOBACCO', 'CLASIFFICATION_FINAL', 'ICU', 'DATE_DIED'
         ]
-        nrows = 200_000
 
         # Load Raw Data - Optimisation avec pyarrow si disponible
         try:
@@ -97,13 +96,11 @@ def load_data():
                 'data/covid19_data.csv',
                 engine='pyarrow',
                 usecols=usecols,
-                nrows=nrows,
             )
         except Exception:
             df_raw_source = pd.read_csv(
                 'data/covid19_data.csv',
                 usecols=usecols,
-                nrows=nrows,
                 low_memory=False,
             )
     except Exception as e:
