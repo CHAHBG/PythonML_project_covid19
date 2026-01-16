@@ -1,458 +1,270 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
 import pickle
-import plotly.express as px
-import warnings
 import joblib
+import random
 
-# Réduit le bruit des logs (Streamlit Cloud)
-warnings.filterwarnings(
-    "ignore",
-    message=r"X does not have valid feature names, but .* was fitted with feature names",
-)
-
-# Configuration Streamlit
+# --- CONFIGURATION DE LA PAGE ---
 st.set_page_config(
-    page_title="COVID-19 Analytics",
-    page_icon="🧬",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="COVID-19 Risk Analyst",
+    page_icon="🦠",
+    layout="wide"
 )
 
-# Style (CSS)
-st.markdown("""
-<style>
-    /* Fond de l'application */
-    .stApp {
-        background-color: #0E1117;
-        color: #FAFAFA;
-    }
-    
-    /* Cartes */
-    .metric-card {
-        background-color: #262730;
-        border: 1px solid #41444C;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-        margin-bottom: 20px;
-        text-align: center;
-    }
-    
-    .metric-value {
-        font-size: 2.2rem;
-        font-weight: 700;
-        color: #FFFFFF;
-        margin-bottom: 5px;
-    }
-    .metric-label {
-        font-size: 1rem;
-        color: #A3A8B8;
-        font-weight: 500;
-    }
-    
-    /* Carte équipe */
-    .team-card {
-        background-color: #1E1E1E;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 5px solid #EF553B;
-        margin-bottom: 10px;
-    }
-    
-    /* Titres */
-    h1, h2, h3, h4 {
-        color: #FFFFFF !important;
-        font-family: 'Inter', sans-serif;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Chargement et préparation des données
+# --- FONCTIONS UTILES (Cache pour la vitesse) ---
 @st.cache_resource
 def load_data():
-    try:
-        df_raw_source = pd.read_csv('data/covid19_data.csv')
-    except Exception as e:
-        st.error("Erreur : Le fichier 'data/covid19_data.csv' est introuvable.")
-        return pd.DataFrame(), pd.DataFrame()
+    # On charge un échantillon pour la fluidité (20 000 lignes)
+    df = pd.read_csv('data/covid19_data.csv', nrows=20000)
 
-    # Données brutes (affichage)
-    df_raw = df_raw_source.copy()
-    
-    map_dict = {1: 'Oui', 2: 'Non', 97: 'Inconnu', 99: 'Inconnu'}
-    cols_to_map = ['PNEUMONIA', 'DIABETES', 'COPD', 'ASTHMA', 'INMSUPR', 
-    'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 'OBESITY', 'RENAL_CHRONIC', 
-    'TOBACCO', 'INTUBED', 'ICU']
-    
-    for col in cols_to_map:
-        if col in df_raw.columns:
-            df_raw[f'{col}_LABEL'] = df_raw[col].map(map_dict).fillna("Inconnu")
-        
-    df_raw['SEX_LABEL'] = df_raw['SEX'].map({1: 'Femme', 2: 'Homme'})
-    df_raw['PATIENT_TYPE_LABEL'] = df_raw['PATIENT_TYPE'].map({1: 'Domicile', 2: 'Hospitalisation'})
-    df_raw['DEATH'] = np.where(df_raw['DATE_DIED'] == '9999-99-99', 0, 1)
-    df_raw['DEATH_LABEL'] = df_raw['DEATH'].map({0: 'Survivant', 1: 'Décédé'})
+    # PETIT NETTOYAGE RAPIDE POUR L'AFFICHAGE
+    # On crée la colonne DEATH proprement
+    df['DEATH'] = np.where(df['DATE_DIED'] == '9999-99-99', 0, 1)
 
-    # Données nettoyées (logique du notebook)
-    df_clean = df_raw_source.copy()
-    
-    # Normalisation 1/2 -> 1/0
-    colToNormaliseYoN = [col for col in df_clean.columns if col not in ['AGE', 'DATE_DIED','MEDICAL_UNIT','CLASIFFICATION_FINAL']]
-    df_clean[colToNormaliseYoN] = df_clean[colToNormaliseYoN].replace({2.0: 0, 1.0: 1})
-    
-    # Valeurs manquantes (97/98/99)
-    colToCorrect = [col for col in df_clean.columns if col not in ['AGE', 'DATE_DIED']]
-    df_clean[colToCorrect] = df_clean[colToCorrect].replace({97: np.nan, 98: np.nan, 99: np.nan})
-    
-    # Règles métier
-    df_clean.loc[df_clean['SEX'] == 0, 'PREGNANT'] = 0
-    
-    cols = ['ICU', 'INTUBED']
-    for col in cols:
-        df_clean.loc[df_clean['PATIENT_TYPE'] == 1, col] = df_clean.loc[df_clean['PATIENT_TYPE'] == 1, col].fillna(0)
-        
-    df_clean.dropna(inplace=True)
-    
-    # Cible
-    df_clean['DEATH'] = df_clean['DATE_DIED'].apply(lambda x: 0 if x == '9999-99-99' else 1)
-    
-    # Variables dérivées pour l'app
-    binary_map = {1: 'Oui', 0: 'Non'}
-    sex_map = {1: 'Femme', 0: 'Homme'} 
-    pt_map = {1: 'Domicile', 0: 'Hospitalisation'} 
-    
-    for col in cols_to_map:
-        if col in df_clean.columns:
-            df_clean[f'{col}_LABEL'] = df_clean[col].map(binary_map)
-        
-    df_clean['SEX_LABEL'] = df_clean['SEX'].map(sex_map)
-    df_clean['PATIENT_TYPE_LABEL'] = df_clean['PATIENT_TYPE'].map(pt_map)
-    df_clean['DEATH_LABEL'] = df_clean['DEATH'].map({0: 'Survivant', 1: 'Décédé'})
-    
-    # Dates
-    df_clean['DATE_DIED_DT'] = df_clean['DATE_DIED'].replace('9999-99-99', np.nan)
-    df_clean['DATE_DIED_DT'] = pd.to_datetime(df_clean['DATE_DIED_DT'], dayfirst=True, errors='coerce')
-    df_clean['MOIS'] = df_clean['DATE_DIED_DT'].dt.to_period('M').astype(str)
+    # On remplace les codes 1/2 par Oui/Non pour les graphiques (plus joli)
+    cols_oui_non = ['PNEUMONIA', 'DIABETES', 'ASTHMA', 'OBESITY', 'CARDIOVASCULAR', 'INTUBED']
+    for col in cols_oui_non:
+        df[col] = df[col].replace({1: 'Oui', 2: 'Non', 97: 'Inconnu', 99: 'Inconnu'})
 
-    return df_raw, df_clean
+    return df
 
-# Modèle
 @st.cache_resource
-def get_model():
-    """Charge le modèle pré-entraîné.
-
-    Important : sur Streamlit Cloud, Git LFS n'est pas toujours disponible.
-    On utilise donc un artefact léger en `.joblib` versionné dans le dépôt.
-    """
-
-    # Modèle recommandé (léger)
+def load_model():
+    # Priorité au modèle léger (recommandé pour Streamlit Cloud)
     try:
         return joblib.load('model_covid_rf.joblib')
     except Exception:
         pass
+    # Fallback local (ancien format)
+    return pickle.load(open('mon_modele_covid.pkl', 'rb'))
 
-    # Compatibilité locale (ancien modèle)
-    try:
-        return pickle.load(open('mon_modele_covid.pkl', 'rb'))
-    except Exception:
-        return None
+def map_oui_non(text):
+    return 1 if text == "Oui" else 2
 
-# Chargement (données + modèle)
-df_raw, df = load_data()
-model = get_model()
 
-# Navigation
+def get_resources():
+    """Charge (une seule fois par session) les données + le modèle avec une UI de progression."""
+    if "_resources_ready" in st.session_state:
+        return load_data(), load_model()
+
+    tips = [
+        "Les valeurs 97/99 dans ce dataset représentent souvent des données manquantes.",
+        "Le rappel (recall) est crucial si on veut détecter un maximum de cas à risque.",
+        "Un Random Forest combine plusieurs arbres pour réduire le surapprentissage.",
+        "L'âge est l'un des facteurs les plus corrélés au risque de décès dans l'analyse exploratoire.",
+    ]
+
+    holder = st.empty()
+    with holder.container():
+        st.markdown("## ⏳ Chargement en cours")
+        st.info(f"💡 Le saviez-vous ? {random.choice(tips)}")
+
+        status = st.status("Initialisation…", expanded=True)
+        progress = st.progress(0)
+
+        status.write("1/3 Lecture et préparation des données…")
+        progress.progress(10)
+        with st.spinner("Lecture du fichier CSV…"):
+            df = load_data()
+        progress.progress(65)
+
+        status.write("2/3 Chargement du modèle de prédiction…")
+        with st.spinner("Chargement du modèle…"):
+            model = load_model()
+        progress.progress(90)
+
+        status.write("3/3 Finalisation…")
+        progress.progress(100)
+        status.update(label="Prêt ✅", state="complete", expanded=False)
+
+    holder.empty()
+    st.session_state["_resources_ready"] = True
+    return df, model
+
+# --- NAVIGATION (SIDEBAR) ---
+st.sidebar.image("https://cdn-icons-png.flaticon.com/512/2785/2785819.png", width=100)
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Aller vers :", 
-    ["Accueil", "Exploration Intuitive", "Diagnostic IA", "Méthodologie & Insights"]
-)
+page = st.sidebar.radio("Aller vers :", ["🏠 Accueil", "📊 Exploration Visuelle", "🔮 Prédiction IA"])
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 👥 Équipe Projet")
-st.sidebar.markdown("""
-* **Cheikh A. B. GNINGUE**
-* **Jean Paul I. MALAN**
-* **Grace KOFFI**
-* **Loua F. DIOMANDE**
-""")
+st.sidebar.info("Projet Data Science\n**Cheikh Ahmadou Bamba GNINGUE**")
 
-st.sidebar.markdown("---")
-# Filtres
-df_filtered = df.copy()
+# ==========================================
+# PAGE 1 : ACCUEIL
+# ==========================================
+if page == "🏠 Accueil":
+    st.title("🦠 Analyse des Risques COVID-19")
+    st.markdown("### Bienvenue sur l'interface de prédiction médicale.")
 
-if page == "Exploration Intuitive" and not df.empty:
-    st.sidebar.header("🔍 Filtres Globaux")
-    age_range = st.sidebar.slider("Tranche d'âge", int(df['AGE'].min()), int(df['AGE'].max()), (0, 100))
-    gender_opts = df['SEX_LABEL'].dropna().unique()
-    gender_sel = st.sidebar.multiselect("Genre", gender_opts, default=gender_opts)
-    pt_opts = df['PATIENT_TYPE_LABEL'].dropna().unique()
-    pt_sel = st.sidebar.multiselect("Type de Prise en Charge", pt_opts, default=pt_opts)
-    
-    mask = ((df['AGE'] >= age_range[0]) & (df['AGE'] <= age_range[1]) & (df['SEX_LABEL'].isin(gender_sel)) & (df['PATIENT_TYPE_LABEL'].isin(pt_sel)))
-    df_filtered = df[mask]
-    st.sidebar.markdown(f"**{len(df_filtered):,} patients sélectionnés**")
+    st.success("👈 Commencez par explorer les données via le menu à gauche, ou passez directement à la prédiction.")
 
-# Pages
-if page == "Accueil":
-    st.title("🦠 Plateforme Analytics COVID-19")
-    st.markdown("### 🏥 Tableau de Bord Stratégique")
-    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        **Ce projet permet de :**
+        * 📊 **Visualiser** les facteurs aggravants du virus.
+        * 🤖 **Prédire** le risque de décès grâce à une IA (Random Forest).
+        * 🏥 **Aider** à la prise de décision médicale.
+        """)
+    with col2:
+        # Tu peux mettre une image d'illustration ici
+        st.write(" ")
+
+# ==========================================
+# PAGE 2 : EXPLORATION VISUELLE (EDA)
+# ==========================================
+elif page == "📊 Exploration Visuelle":
+    st.title("🔎 Exploration des Données")
+
+    df, _model = get_resources()
+
+    # 1. LES CHIFFRES CLÉS (KPIs)
+    st.subheader("📌 Vue d'ensemble")
+    col1, col2, col3 = st.columns(3)
+
+    nb_patients = len(df)
+    nb_deces = df['DEATH'].sum()
+    taux_mortalite = (nb_deces / nb_patients) * 100
+
+    col1.metric("Patients Analysés", f"{nb_patients:,}")
+    col2.metric("Nombre de Décès", f"{nb_deces:,}")
+    col3.metric("Taux de Mortalité (Échantillon)", f"{taux_mortalite:.1f}%", delta_color="inverse")
+
     st.markdown("---")
-    st.subheader("👥 L'Équipe de Réalisation")
-    
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.info("**Cheikh Ahmadou Bamba GNINGUE**")
-    with c2:
-        st.info("**Jean Paul Ildevert MALAN**")
-    with c3:
-        st.info("**Grace KOFFI**")
-    with c4:
-        st.info("**Loua Franck DIOMANDE**")
-    
-    if not df.empty:
-        st.markdown("---")
-        c1, c2, c3, c4 = st.columns(4)
-        total = len(df)
-        deaths = df['DEATH'].sum()
-        rate = (deaths/total)*100 if total > 0 else 0
-        avg_age = df['AGE'].mean()
-        
-        with c1:
-            st.markdown(f'<div class="metric-card"><div class="metric-label">Patients Analysés</div><div class="metric-value">{total:,}</div></div>', unsafe_allow_html=True)
-        with c2:
-            st.markdown(f'<div class="metric-card"><div class="metric-label">Décès Confirmés</div><div class="metric-value">{deaths:,}</div></div>', unsafe_allow_html=True)
-        with c3:
-            st.markdown(f'<div class="metric-card"><div class="metric-label">Taux de Mortalité</div><div class="metric-value">{rate:.2f}%</div></div>', unsafe_allow_html=True)
-        with c4:
-            st.markdown(f'<div class="metric-card"><div class="metric-label">Âge Moyen</div><div class="metric-value">{avg_age:.1f} ans</div></div>', unsafe_allow_html=True)
-            
-    st.markdown("---")
-    
-    st.subheader("📂 Aperçu des Données")
-    st.write("Le jeu de données a été rigoureusement nettoyé pour garantir la précision des analyses.")
-    
-    tab_raw, tab_clean = st.tabs(["📄 Données Brutes", "✨ Données Normalisées & Nettoyées"])
-    
-    with tab_raw:
-        st.info("Données brutes avec valeurs manquantes.")
-        st.dataframe(df_raw.head(50), width="stretch")
-        
-    with tab_clean:
-        st.success("Données nettoyées et normalisées (0/1).")
-        st.dataframe(df.head(50), width="stretch")
 
-# --- PAGE 2: EXPLORATION INTUITIVE ---
-elif page == "Exploration Intuitive":
-    st.title("📊 Exploration Dynamique")
-    
-    if df_filtered.empty:
-        st.warning("Aucune donnée disponible avec les filtres actuels.")
-    else:
-        col_L, col_R = st.columns(2)
-        
-        with col_L:
-            st.markdown("#### 🍩 Répartition des Issues")
-            counts = df_filtered['DEATH_LABEL'].value_counts().reset_index()
-            counts.columns = ['Statut', 'Nombre']
-            
-            fig1 = px.pie(counts, values='Nombre', names='Statut', hole=0.5, 
-                          color='Statut', color_discrete_map={'Survivant':'#00CC96', 'Décédé':'#EF553B'})
-            fig1.update_traces(textinfo='percent+label')
-            fig1.update_layout(showlegend=False, margin=dict(t=0, b=0, l=0, r=0), paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig1, width="stretch")
-        
-        with col_R:
-            st.markdown("#### 📈 Tendance Temporelle (Décès)")
-            df_time = df_filtered[df_filtered['DEATH'] == 1]
-            if not df_time.empty:
-                time_counts = df_time['MOIS'].value_counts().sort_index().reset_index()
-                time_counts.columns = ['Mois', 'Décès']
-                
-                fig2 = px.line(time_counts, x='Mois', y='Décès', markers=True,
-                               labels={'Mois': 'Mois', 'Décès': 'Nombre de Décès'})
-                fig2.update_traces(line_color='#EF553B', line_width=3)
-                fig2.update_layout(xaxis_title=None, yaxis_title=None, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                                  xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor='#444'))
-                st.plotly_chart(fig2, width="stretch")
+    # 2. LES GRAPHIQUES
+    st.subheader("📈 Visualisation des Facteurs de Risque")
 
-        st.markdown("---")
-        
-        tab1, tab2, tab3 = st.tabs(["Facteurs de Risque", "Comorbidités", "Corrélation"])
-        
-        with tab1:
-            c_bio1, c_bio2 = st.columns(2)
-            with c_bio1:
-                st.markdown("**Distribution Âge**")
-                fig3 = px.histogram(df_filtered, x="AGE", color="DEATH_LABEL", nbins=50, 
-                                    color_discrete_map={'Survivant':'#00CC96', 'Décédé':'#EF553B'},
-                                    barmode="overlay", opacity=0.7)
-                fig3.update_layout(xaxis_title="Âge", yaxis_title="Nombre", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                                   font=dict(color="white"), legend_title="Statut")
-                st.plotly_chart(fig3, width="stretch")
-                
-            with c_bio2:
-                st.markdown("**Soins Intensifs (ICU)**")
-                df_icu = df_filtered[df_filtered['ICU_LABEL'].isin(['Oui', 'Non'])]
-                if not df_icu.empty:
-                    fig4 = px.violin(df_icu, y="AGE", x="ICU_LABEL", color="ICU_LABEL", box=True, points=False,
-                                     color_discrete_map={'Oui':'#EF553B', 'Non':'#3498db'})
-                    fig4.update_layout(xaxis_title="Admission en Réa", yaxis_title="Âge", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                                       font=dict(color="white"), showlegend=False)
-                    st.plotly_chart(fig4, width="stretch")
+    tab1, tab2, tab3 = st.tabs(["💀 Mortalité Globale", "🏥 Maladies & Risques", "🎂 Impact de l'Âge"])
 
-        with tab2:
-            st.markdown("**Impact des Pathologies**")
-            disease = st.selectbox("Choisir pathologies", ['DIABETES', 'ASTHMA', 'OBESITY', 'CARDIOVASCULAR', 'HIPERTENSION'])
-            label_col = f'{disease}_LABEL'
-            
-            if label_col in df_filtered.columns:
-                group = df_filtered.groupby(label_col)['DEATH'].mean().reset_index()
-                group['Taux Mortalité (%)'] = group['DEATH'] * 100
-                
-                fig5 = px.bar(group, x=label_col, y='Taux Mortalité (%)', color='Taux Mortalité (%)',
-                              color_continuous_scale='Reds')
-                fig5.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", 
-                                   font=dict(color="white"))
-                st.plotly_chart(fig5, width="stretch")
+    # --- ONGLET 1 : CAMEMBERT ---
+    with tab1:
+        st.write("Répartition des issues (Décès vs Guérison) dans notre jeu de données.")
 
-        with tab3:
-            if st.button("Voir Matrice"):
-                num_df = df_filtered.select_dtypes(include=[np.number])
-                corr = num_df.corr()
-                
-                fig6 = px.imshow(corr, text_auto=".2f", color_continuous_scale='RdBu_r', aspect="auto")
-                fig6.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                                   font=dict(color="white"))
-                st.plotly_chart(fig6, width="stretch")
+        fig, ax = plt.subplots()
+        df['DEATH_LABEL'] = df['DEATH'].replace({0: 'Survivant', 1: 'Décédé'})
+        counts = df['DEATH_LABEL'].value_counts()
 
-# --- PAGE 3: DIAGNOSTIC IA ---
-elif page == "Diagnostic IA":
-    st.title("🤖 Diagnostic IA")
-    st.write("Estimation du risque vital via Random Forest.")
-    
-    with st.container():
-        st.markdown('<div class="metric-card" style="text-align:left;">', unsafe_allow_html=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("👤 Profil")
-            age = st.slider("Âge", 0, 100, 45)
-            sexe = st.radio("Sexe", ["Femme", "Homme"], horizontal=True)
-            hospital = st.radio("Prise en Charge", ["Domicile", "Hôpital"], horizontal=True)
-            
-            st.markdown("---")
-            st.subheader("🚬 Habitudes & Autres")
+        ax.pie(counts, labels=counts.index, autopct='%1.1f%%', colors=['#66b3ff', '#ff9999'], startangle=90)
+        ax.axis('equal')  # Pour que le camembert soit rond
+        st.pyplot(fig)
+        st.caption("Ce graphique montre la proportion de décès dans l'échantillon observé.")
+
+    # --- ONGLET 2 : INTERACTIF (BARPLOT) ---
+    with tab2:
+        st.write("Quel est l'impact des comorbidités sur le décès ?")
+
+        # Le sélecteur interactif
+        option = st.selectbox("Choisissez une maladie à analyser :", 
+                              ['PNEUMONIA', 'DIABETES', 'ASTHMA', 'OBESITY', 'CARDIOVASCULAR', 'INTUBED'])
+
+        st.write(f"Comparaison des décès pour : **{option}**")
+
+        fig2, ax2 = plt.subplots(figsize=(8, 5))
+        # On compare le taux de décès selon Oui ou Non
+        sns.barplot(x=option, y='DEATH', data=df, palette="viridis", ax=ax2, order=['Non', 'Oui'])
+        ax2.set_ylabel("Probabilité de Décès")
+        ax2.set_title(f"Risque de décès selon : {option}")
+
+        st.pyplot(fig2)
+        st.info(f"💡 Analyse : Si la barre 'Oui' est plus haute, c'est que **{option}** augmente le risque.")
+
+    # --- ONGLET 3 : DISTRIBUTION (HISTPLOT) ---
+    with tab3:
+        st.write("Distribution de l'âge des patients décédés vs survivants.")
+
+        fig3, ax3 = plt.subplots(figsize=(10, 6))
+        sns.histplot(data=df, x='AGE', hue='DEATH_LABEL', kde=True, element="step", palette={'Survivant': 'blue', 'Décédé': 'red'}, ax=ax3)
+        ax3.set_title("L'âge est-il un facteur déterminant ?")
+        st.pyplot(fig3)
+        st.warning("⚠️ On observe clairement que la courbe rouge (Décès) est décalée vers les âges avancés.")
+
+# ==========================================
+# PAGE 3 : PRÉDICTION IA
+# ==========================================
+elif page == "🔮 Prédiction IA":
+    st.title("🤖 Diagnostic Intelligent")
+    st.markdown("Remplissez le dossier médical du patient. L'IA calculera ses chances de survie.")
+
+    _df, model = get_resources()
+
+    with st.form("form_prediction"):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            age = st.slider("Âge", 0, 110, 45)
+            sexe = st.radio("Sexe", ["Femme", "Homme"])
+            hospital = st.radio("Hospitalisé ?", ["Non", "Oui"])
+            intubation = st.selectbox("Intubation nécessaire ?", ["Non", "Oui"])
+            pneumonie = st.selectbox("Pneumonie ?", ["Non", "Oui"])
+
+        with col2:
+            st.write("**Comorbidités**")
+            diabete = st.checkbox("Diabète")
+            bpco = st.checkbox("BPCO (Poumons)")
+            asthme = st.checkbox("Asthme")
+            immu = st.checkbox("Immunosupprimé")
+            hyper = st.checkbox("Hypertension")
+            cardio = st.checkbox("Maladie Cardiovasculaire")
+            obesite = st.checkbox("Obésité")
+            rein = st.checkbox("Insuffisance Rénale")
             tabac = st.checkbox("Fumeur")
-            enceinte = False
-            if sexe == "Femme":
-                enceinte = st.checkbox("Enceinte")
-                
-        with c2:
-            st.subheader("🏥 Clinique (Comorbidités)")
-            col_a, col_b = st.columns(2)
-            with col_a:
-                intub = st.checkbox("Intubation")
-                pneu = st.checkbox("Pneumonie")
-                diab = st.checkbox("Diabète")
-                copd = st.checkbox("BPCO (Poumons)")
-                asthme = st.checkbox("Asthme")
-            with col_b:
-                immu = st.checkbox("Immunosupprimé")
-                hyper = st.checkbox("Hypertension")
-                cardio = st.checkbox("Cardiovasculaire")
-                rein = st.checkbox("Insuffisance Rénale")
-                obes = st.checkbox("Obésité")
-                autre_maladie = st.checkbox("Autre Maladie")
 
-        st.markdown('</div>', unsafe_allow_html=True)
+        submit = st.form_submit_button("🩺 Lancer le Diagnostic")
 
-    if st.button("Lancer Calcul de Risque", type="primary"):
-        def gv(x): return 1 if x else 0
-        
-        f_sex = 1 if sexe == "Femme" else 0
-        f_pt = 0 if hospital == "Hôpital" else 1
-        
-        feat = [
-            2, # USMER
-            1, # MEDICAL_UNIT
-            f_sex, # SEX
-            f_pt, # PATIENT_TYPE
-            gv(intub), # INTUBED
-            gv(pneu), # PNEUMONIA
-            age, # AGE
-            gv(enceinte), # PREGNANT
-            gv(diab), # DIABETES
-            gv(copd), # COPD
-            gv(asthme), # ASTHMA
-            gv(immu), # INMSUPR
-            gv(hyper), # HIPERTENSION
-            gv(autre_maladie), # OTHER_DISEASE
-            gv(cardio), # CARDIOVASCULAR
-            gv(obes), # OBESITY
-            gv(rein), # RENAL_CHRONIC
-            gv(tabac), # TOBACCO
-            3, # CLASIFFICATION_FINAL
-            0  # ICU
+    if submit:
+        # Mapping des variables (A ajuster selon ton X_train exact !)
+        # Ici j'utilise une logique standard
+        # 1=Oui, 2=Non (Standard Dataset COVID)
+        def to_code(bool_val): return 1 if bool_val else 2
+
+        features = [
+            1 if hospital == "Non" else 2, # USMER (Hypothèse)
+            12, # MEDICAL UNIT
+            1 if sexe == "Femme" else 2,
+            1 if hospital == "Non" else 2, # PATIENT_TYPE (1=Home, 2=Hopital)
+            to_code(intubation == "Oui"), # INTUBED
+            to_code(pneumonie == "Oui"), # PNEUMONIA
+            age,
+            2, # PREGNANT
+            to_code(diabete),
+            to_code(bpco),
+            to_code(asthme),
+            to_code(immu),
+            to_code(hyper),
+            to_code(cardio), # OTHER DISEASE
+            to_code(cardio),
+            to_code(obesite),
+            to_code(rein),
+            to_code(tabac),
+            7, # CLASSIF
+            2 # ICU
         ]
-        
-        feature_names = ['USMER', 'MEDICAL_UNIT', 'SEX', 'PATIENT_TYPE', 'INTUBED', 
-                        'PNEUMONIA', 'AGE', 'PREGNANT', 'DIABETES', 'COPD', 'ASTHMA', 
-                        'INMSUPR', 'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR', 
-                        'OBESITY', 'RENAL_CHRONIC', 'TOBACCO', 'CLASIFFICATION_FINAL', 'ICU']
-        
-        feat_df = pd.DataFrame([feat], columns=feature_names)
-        feat_df = feat_df.astype(float)
-        
-        if model:
-            try:
-                if hasattr(model, 'feature_names_in_'):
-                    feat_df = feat_df[model.feature_names_in_]
-                
-                prob = model.predict_proba(feat_df)[0][1] * 100
-                
-                cR1, cR2 = st.columns([1,2])
-                with cR1:
-                    color = "#EF553B" if prob > 50 else "#00CC96"
-                    st.markdown(f'<div style="background-color:{color};border-radius:50%;width:120px;height:120px;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:bold;margin:auto;">{prob:.0f}%</div>', unsafe_allow_html=True)
-                with cR2:
-                    st.markdown(f"### Probabilité de Décès : {prob:.2f}%")
-                    st.progress(int(prob))
-                    if prob > 50: st.error("⚠️ HAUT RISQUE")
-                    else: st.success("✅ Risque Modéré")
-            except Exception as e:
-                st.error(f"Erreur technique : {e}")
-                st.info("Le modèle est en cours de rechargement...")
-        else:
-            st.error("Le modèle n'a pas pu être chargé.")
 
-# --- PAGE 4: METHODOLOGIE ---
-elif page == "Méthodologie & Insights":
-    st.title("📚 Mèthodologie & Modélisation")
-    
-    st.markdown("### 1. Protocole d'Entraînement")
-    c_meth1, c_meth2 = st.columns(2)
-    with c_meth1:
-        st.markdown("""
-        <div class="metric-card">
-            <h4>✂️ Division des Données</h4>
-            <div style="font-size: 24px; font-weight: bold; margin: 10px 0;">80% - 20%</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with c_meth2:
-        st.markdown("""
-        <div class="metric-card">
-            <h4>🎯 Cible (Target)</h4>
-            <div style="font-size: 24px; font-weight: bold; margin: 10px 0;">DEATH</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("### 2. Performance")
-    perf_data = {
-        'Modèle': ['Logistic Regression', 'Random Forest', 'Naive Bayes', 'SVM'],
-        'Accuracy': ['94%', '95%', '94%', '93%'],
-        'F1-Score (0)': ['97%', '97%', '97%', '96%']
-    }
-    st.table(pd.DataFrame(perf_data))
+        # Le modèle a été entraîné avec des noms de colonnes (DataFrame)
+        feature_names = [
+            'USMER', 'MEDICAL_UNIT', 'SEX', 'PATIENT_TYPE', 'INTUBED',
+            'PNEUMONIA', 'AGE', 'PREGNANT', 'DIABETES', 'COPD', 'ASTHMA',
+            'INMSUPR', 'HIPERTENSION', 'OTHER_DISEASE', 'CARDIOVASCULAR',
+            'OBESITY', 'RENAL_CHRONIC', 'TOBACCO', 'CLASIFFICATION_FINAL', 'ICU'
+        ]
+        features_df = pd.DataFrame([features], columns=feature_names)
+
+        try:
+            prediction = model.predict(features_df)
+            proba = model.predict_proba(features_df)
+            risque = proba[0][1] * 100
+
+            st.divider()
+            if risque > 50:
+                st.error(f"🔴 RISQUE ÉLEVÉ : {risque:.1f}% de probabilité de décès.")
+                st.progress(int(risque))
+            else:
+                st.success(f"🟢 RISQUE FAIBLE : {risque:.1f}% de probabilité de décès.")
+                st.progress(int(risque))
+
+        except Exception as e:
+            st.error("Erreur de format des données. Vérifiez le nombre de colonnes.")
